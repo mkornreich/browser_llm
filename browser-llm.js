@@ -267,6 +267,83 @@
     return "";
   }
 
+  // ── generate with retries + a pluggable output filter ────────────────────────
+  // The loop most apps wrap around brain.generate(): keep generating until the
+  // output passes a quality filter, or the attempts run out. Each slow (non-Nano)
+  // attempt is bounded by a timeout so a wedged WASM pass can't hang forever;
+  // Nano's own (legitimate) cold start is never cut off. Tokens are forwarded for
+  // the CURRENT attempt only, so late output from a timed-out or superseded
+  // attempt never reaches the caller. Returns the accepted reply, or null
+  // (nothing passed the filter, the attempt timed out / threw, or the caller
+  // aborted via shouldContinue). Everything app-specific is a hook:
+  //
+  //   brain                a brain from loadGenerator() / buildBrain()
+  //   messages             chat messages for brain.generate
+  //   opts.options         generation options: an object, or (attempt) => object
+  //                        (e.g. to lower temperature on each retry)
+  //   opts.attempts        max attempts (default: 4 for a Nano brain, else 2)
+  //   opts.timeoutMs       per-attempt timeout for slow backends (default 40000)
+  //   opts.timeoutBackends brain.backend values to bound with the timeout
+  //                        (default: every backend except "nano")
+  //   opts.postprocess     (rawText) => finalText, run before the filter
+  //   opts.isBad           (finalText) => true to reject this attempt and retry
+  //                        — the pluggable output filter
+  //   opts.onToken         (textSoFar) => void, live tokens for the current
+  //                        attempt only
+  //   opts.onReject        (finalText, attempt) => void, after a rejected attempt
+  //   opts.shouldContinue  () => false to abort early and return null (e.g. a
+  //                        superseded request); checked around each attempt
+  async function generateWithRetry(brain, messages, opts) {
+    opts = opts || {};
+    if (!brain || typeof brain.generate !== "function") {
+      throw new Error("generateWithRetry: a brain with .generate is required");
+    }
+    var isNano = brain.backend === "nano";
+    var attempts = typeof opts.attempts === "number" ? opts.attempts : (isNano ? 4 : 2);
+    var timeoutMs = typeof opts.timeoutMs === "number" ? opts.timeoutMs : 40000;
+    var post = typeof opts.postprocess === "function" ? opts.postprocess : function (s) { return s; };
+    var isBad = typeof opts.isBad === "function" ? opts.isBad : function () { return false; };
+    function cont() { return opts.shouldContinue ? !!opts.shouldContinue() : true; }
+    function optionsFor(a) { return typeof opts.options === "function" ? opts.options(a) : (opts.options || {}); }
+    function wantsTimeout() {
+      if (opts.timeoutBackends) { return opts.timeoutBackends.indexOf(brain.backend) !== -1; }
+      return !isNano;
+    }
+    // A fresh token forwarder per attempt (its own `live`), so tokens from an
+    // abandoned attempt stop the moment that attempt ends.
+    function makeForwarder() {
+      var live = true;
+      return {
+        fn: opts.onToken ? function (t) { if (live && cont()) { try { opts.onToken(t); } catch (e) {} } } : undefined,
+        stop: function () { live = false; }
+      };
+    }
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (!cont()) { return null; }
+      var fwd = makeForwarder();
+      var raw;
+      try {
+        var genP = brain.generate(messages, optionsFor(attempt), fwd.fn);
+        if (wantsTimeout()) {
+          raw = await Promise.race([genP, new Promise(function (_res, rej) {
+            setTimeout(function () { rej(new Error("generateWithRetry: attempt timed out")); }, timeoutMs);
+          })]);
+        } else {
+          raw = await genP;
+        }
+      } catch (e) {
+        fwd.stop();       // stop any late tokens from the wedged attempt
+        return null;      // timed out or the backend threw → give up gracefully
+      }
+      fwd.stop();
+      if (!cont()) { return null; }
+      var reply = post(raw);
+      if (!isBad(reply)) { return reply; }              // accepted
+      if (opts.onReject) { try { opts.onReject(reply, attempt); } catch (e) {} }
+    }
+    return null;   // ran out of attempts without a good reply
+  }
+
   // ── default connection copy ──────────────────────────────────────────────────
   // Human-readable reasons to NOT auto-pull the heavy fallback model right now.
   // Neutral defaults; a caller (e.g. Cool Concepts) passes its own voice via
@@ -909,6 +986,7 @@ self.postMessage({ type: "boot" });
     self_.probeWeightsCache = probeWeightsCache;
     self_.loadGenerator = loadGenerator;
     self_.buildBrain = buildBrain;
+    self_.generateWithRetry = generateWithRetry;
     self_.loadTfPipeline = loadTfPipeline;
     self_.dropTfSpare = dropTfSpare;
     self_.prewarm = prewarm;
@@ -941,6 +1019,8 @@ self.postMessage({ type: "boot" });
     nanoApi: nanoApi,
     nanoStatus: nanoStatus,
     replyOf: replyOf,
+    // generation loop (retries + pluggable output filter)
+    generateWithRetry: generateWithRetry,
     // factory
     create: create
   };

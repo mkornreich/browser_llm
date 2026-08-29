@@ -91,6 +91,7 @@ Provider methods and state:
 | Member | Does |
 | --- | --- |
 | `loadGenerator()` → `Promise<brain>` | Build the brain once (memoized); sets `modelReady`. **The main entry.** |
+| `generateWithRetry(brain, messages, opts)` → `Promise<string \| null>` | The generation loop most apps want: retry until the output passes a **pluggable filter** (`opts.isBad`), or attempts run out. Bounds each slow (non-Nano) attempt with a timeout, forwards streamed tokens for the current attempt only, and takes hooks for `options(attempt)`, `postprocess`, `onToken`, `onReject`, and `shouldContinue`. Defaults: 4 attempts for a Nano brain / 2 otherwise, 40 s timeout on non-Nano. Also on `BrowserLLM.*`. |
 | `prewarm()` | Warm the brain in the background as soon as the page settles. Call on load and on `"online"`. |
 | `probeWeightsCache()` → `Promise<bool>` | Detect a returning visitor whose fallback weights are already on disk. |
 | `downloadEta()` → `{ etaMs, etaSeconds, bytesPerSec, loaded, total, pct, done }` \| `null` | **Estimated time remaining** for the in-flight model download. `null` until there's enough data (or if the rate stalls); `done: true` once finished. `etaMs`/`etaSeconds` come from an EMA of progress-per-ms, so they track the current speed; `bytesPerSec` is present when byte totals are known (the SmolLM2 download) and `null` for Nano's fraction-only progress. |

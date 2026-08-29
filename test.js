@@ -275,6 +275,72 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   clearWin();
   setNano(false);
 
+  // ── generateWithRetry ─────────────────────────────────────────────────────────
+  function fakeBrain(backend, responder) {
+    var calls = [];
+    return {
+      backend: backend,
+      calls: calls,
+      generate: function (msgs, o, onToken) {
+        var i = calls.length;
+        calls.push({ opts: o, hadToken: !!onToken });
+        return Promise.resolve().then(function () { return responder(i, onToken); });
+      }
+    };
+  }
+
+  // retries until the filter passes
+  var b1 = fakeBrain("nano", function (i) { return i === 0 ? "bad" : "good"; });
+  var r1 = await BrowserLLM.generateWithRetry(b1, [], { isBad: function (s) { return s === "bad"; } });
+  eq(r1, "good", "generateWithRetry: retries past a bad attempt → good");
+  eq(b1.calls.length, 2, "generateWithRetry: took exactly 2 attempts");
+
+  // all-bad exhausts attempts (Nano default = 4) and calls onReject each time
+  var rejects = 0;
+  var b2 = fakeBrain("nano", function () { return "bad"; });
+  var r2 = await BrowserLLM.generateWithRetry(b2, [], {
+    isBad: function () { return true; }, onReject: function () { rejects++; }
+  });
+  eq(r2, null, "generateWithRetry: all bad → null");
+  eq(b2.calls.length, 4, "generateWithRetry: Nano default = 4 attempts");
+  eq(rejects, 4, "generateWithRetry: onReject fired per rejected attempt");
+
+  // non-Nano default = 2 attempts
+  var b3 = fakeBrain("smol-worker", function () { return "bad"; });
+  await BrowserLLM.generateWithRetry(b3, [], { isBad: function () { return true; } });
+  eq(b3.calls.length, 2, "generateWithRetry: non-Nano default = 2 attempts");
+
+  // postprocess runs before the filter
+  var b4 = fakeBrain("nano", function () { return "GOOD"; });
+  var r4 = await BrowserLLM.generateWithRetry(b4, [], { postprocess: function (s) { return "[" + s + "]"; } });
+  eq(r4, "[GOOD]", "generateWithRetry: postprocess applied");
+
+  // options can vary per attempt (e.g. a temperature schedule)
+  var b5 = fakeBrain("smol-worker", function () { return "bad"; });
+  await BrowserLLM.generateWithRetry(b5, [], {
+    isBad: function () { return true; },
+    options: function (a) { return { temperature: 0.6 - a * 0.1 }; }
+  });
+  eq(b5.calls[0].opts.temperature, 0.6, "generateWithRetry: options(0) → temp 0.6");
+  eq(b5.calls[1].opts.temperature, 0.5, "generateWithRetry: options(1) → temp 0.5");
+
+  // onToken forwarded for the current attempt
+  var toks = [];
+  var b6 = fakeBrain("nano", function (i, onToken) { if (onToken) { onToken("hi"); } return "good"; });
+  await BrowserLLM.generateWithRetry(b6, [], { onToken: function (t) { toks.push(t); } });
+  eq(toks, ["hi"], "generateWithRetry: onToken forwarded");
+
+  // shouldContinue:false aborts before any attempt
+  var b7 = fakeBrain("nano", function () { return "good"; });
+  var r7 = await BrowserLLM.generateWithRetry(b7, [], { shouldContinue: function () { return false; } });
+  eq(r7, null, "generateWithRetry: shouldContinue false → null");
+  eq(b7.calls.length, 0, "generateWithRetry: aborted before generating");
+
+  // a slow non-Nano attempt is bounded by the timeout → null
+  var b8 = { backend: "smol-worker", generate: function () { return new Promise(function () {}); } };
+  var r8 = await BrowserLLM.generateWithRetry(b8, [], { timeoutMs: 20, isBad: function () { return false; } });
+  eq(r8, null, "generateWithRetry: hung non-Nano attempt times out → null");
+
   clearNav();
 
   // ── summary ───────────────────────────────────────────────────────────────────
