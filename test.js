@@ -341,6 +341,15 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   var r8 = await BrowserLLM.generateWithRetry(b8, [], { timeoutMs: 20, isBad: function () { return false; } });
   eq(r8, null, "generateWithRetry: hung non-Nano attempt times out → null");
 
+  // timeout:false overrides the backend default (never time out, even non-Nano)
+  var b9 = fakeBrain("smol-worker", function () { return "good"; });
+  var r9 = await BrowserLLM.generateWithRetry(b9, [], { timeout: false });
+  eq(r9, "good", "generateWithRetry: timeout:false → no timeout applied");
+  // timeout:true forces the timeout even on a Nano brain
+  var b10 = { backend: "nano", generate: function () { return new Promise(function () {}); } };
+  var r10 = await BrowserLLM.generateWithRetry(b10, [], { timeout: true, timeoutMs: 20 });
+  eq(r10, null, "generateWithRetry: timeout:true forces timeout on Nano → null");
+
   clearNav();
 
   // ── summary ───────────────────────────────────────────────────────────────────

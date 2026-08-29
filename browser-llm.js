@@ -283,6 +283,9 @@
   //                        (e.g. to lower temperature on each retry)
   //   opts.attempts        max attempts (default: 4 for a Nano brain, else 2)
   //   opts.timeoutMs       per-attempt timeout for slow backends (default 40000)
+  //   opts.timeout         boolean: force the per-attempt timeout on/off for
+  //                        every attempt, overriding the backend default (e.g.
+  //                        pass your own "is this the slow backend?" signal)
   //   opts.timeoutBackends brain.backend values to bound with the timeout
   //                        (default: every backend except "nano")
   //   opts.postprocess     (rawText) => finalText, run before the filter
@@ -306,6 +309,7 @@
     function cont() { return opts.shouldContinue ? !!opts.shouldContinue() : true; }
     function optionsFor(a) { return typeof opts.options === "function" ? opts.options(a) : (opts.options || {}); }
     function wantsTimeout() {
+      if (typeof opts.timeout === "boolean") { return opts.timeout; }
       if (opts.timeoutBackends) { return opts.timeoutBackends.indexOf(brain.backend) !== -1; }
       return !isNano;
     }
