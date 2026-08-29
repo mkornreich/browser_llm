@@ -165,6 +165,50 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   ok(pCustom.workerSource().indexOf('"org/Model"') !== -1, "custom modelId flows into worker");
   ok(pCustom.workerSource().indexOf('dtype: "q4"') !== -1, "custom dtype flows into worker");
 
+  // ── download ETA (estimated time remaining) ───────────────────────────────────
+  (function () {
+    var clock = 0;
+    var lastInfo = null;
+    var pe = BrowserLLM.create({ now: function () { return clock; }, onProgress: function (pct, info) { lastInfo = info; } });
+
+    eq(pe.downloadEta(), null, "ETA: no samples yet → null");
+
+    // first sample anchors the clock; no rate yet
+    clock = 0;
+    pe.applyDlProgress({ file: "w", status: "progress", loaded: 0, total: 100 });
+    eq(pe.downloadEta(), null, "ETA: only the anchor sample → still null");
+
+    // 1s later, half the bytes are in → rate = 0.5 / 1000ms
+    clock = 1000;
+    pe.applyDlProgress({ file: "w", status: "progress", loaded: 50, total: 100 });
+    var eta = pe.downloadEta();
+    ok(eta && !eta.done, "ETA: mid-download → not done");
+    ok(eta && Math.abs(eta.etaMs - 1000) < 1, "ETA: 50% in 1s → ~1000ms remaining");
+    eq(eta.etaSeconds, 1, "ETA: etaSeconds rounds to 1");
+    eq(eta.bytesPerSec, 50, "ETA: 50 bytes in 1s → 50 B/s");
+    eq(eta.pct, 50, "ETA: pct carried through");
+    ok(lastInfo && Math.abs(lastInfo.etaMs - 1000) < 1, "ETA: onProgress info carries etaMs");
+    eq(lastInfo.bytesPerSec, 50, "ETA: onProgress info carries bytesPerSec");
+
+    // download completes → done, zero remaining
+    clock = 3000;
+    pe.applyDlProgress({ file: "w", status: "done" });
+    var etaDone = pe.downloadEta();
+    ok(etaDone && etaDone.done, "ETA: 100% → done");
+    eq(etaDone.etaMs, 0, "ETA: done → 0ms remaining");
+  })();
+
+  // ETA works from Nano's fraction-only progress (no byte totals)
+  (function () {
+    var clock = 0;
+    var pn = BrowserLLM.create({ now: function () { return clock; } });
+    clock = 0;  pn.applyDlProgress({ file: "x", status: "progress", loaded: 0, total: 1000 });
+    clock = 500; pn.applyDlProgress({ file: "x", status: "progress", loaded: 250, total: 1000 });  // 25% in .5s
+    var e = pn.downloadEta();
+    ok(e && Math.abs(e.etaMs - 1500) < 2, "ETA: 25% in 0.5s → ~1500ms remaining");
+    eq(e.bytesPerSec, 500, "ETA: 250 bytes in 0.5s → 500 B/s");
+  })();
+
   clearNav();
 
   // ── summary ───────────────────────────────────────────────────────────────────

@@ -69,7 +69,7 @@ Before it tries anything, the library answers "should we even run a model here?"
 
 | Field | Default | What |
 | --- | --- | --- |
-| `onProgress(pct, info)` | — | Fallback-model download percent (0–100), byte-weighted across files. |
+| `onProgress(pct, info)` | — | Fallback-model download progress. `pct` is 0–100 (byte-weighted across files); `info` is `{ loaded, total, files, etaMs, etaSeconds, bytesPerSec }` — the last three are the **estimated time remaining** (see `downloadEta()`), or `null` before there's enough data. |
 | `onModelReady()` | — | The brain finished building. |
 | `onModelError(err)` | — | Building the brain failed (state is reset so a later call retries). |
 | `onNanoStatus(ready)` | — | Nano availability was (re)checked during `prewarm()`. |
@@ -79,6 +79,8 @@ Before it tries anything, the library answers "should we even run a model here?"
 | `weightsFlagKey` | `"browser_llm:tf-ready"` | `localStorage` key for the "already downloaded here" flag. |
 | `modelId` / `dtype` | SmolLM2-360M / `int8` | Override the fallback model. |
 | `workerBootTimeoutMs` | `20000` | How long to wait for the worker to boot before falling back to the main thread. |
+| `etaSmoothing` | `0.35` | EMA weight (0–1) for the download-rate estimate behind `downloadEta()`; higher tracks the latest speed more closely. |
+| `now` | `performance.now` | Clock for the ETA estimate. Injectable for deterministic testing. |
 
 Provider methods and state:
 
@@ -87,6 +89,7 @@ Provider methods and state:
 | `loadGenerator()` → `Promise<brain>` | Build the brain once (memoized); sets `modelReady`. **The main entry.** |
 | `prewarm()` | Warm the brain in the background as soon as the page settles. Call on load and on `"online"`. |
 | `probeWeightsCache()` → `Promise<bool>` | Detect a returning visitor whose fallback weights are already on disk. |
+| `downloadEta()` → `{ etaMs, etaSeconds, bytesPerSec, loaded, total, pct, done }` \| `null` | **Estimated time remaining** for the in-flight model download. `null` until there's enough data (or if the rate stalls); `done: true` once finished. `etaMs`/`etaSeconds` come from an EMA of progress-per-ms, so they track the current speed; `bytesPerSec` is present when byte totals are known (the SmolLM2 download) and `null` for Nano's fraction-only progress. |
 | `connectionBlock()` / `llmDownloadBlock()` | The connection gates above. |
 | `dropTfSpare()` | Free a prefetched fallback worker (Nano won; its files stay cached). |
 | `modelReady` / `nanoReady` / `weightsCached` / `dlPct` | Live state flags. |

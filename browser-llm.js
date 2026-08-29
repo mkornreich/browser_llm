@@ -295,12 +295,22 @@ self.postMessage({ type: "boot" });
 
     var transformersUrl = config.transformersUrl || DEFAULT_TRANSFORMERS_URL;
     var bootTimeoutMs = typeof config.workerBootTimeoutMs === "number" ? config.workerBootTimeoutMs : 20000;
+    // Clock for the download-ETA estimate (injectable so it can be tested
+    // deterministically). Monotonic performance.now() where available.
+    var nowFn = typeof config.now === "function" ? config.now
+      : (typeof performance !== "undefined" && performance.now)
+        ? function () { return performance.now(); }
+        : function () { return Date.now(); };
+    // Smoothing for the download-rate estimate (0..1; higher trusts the latest
+    // sample more). The rate is an EMA of progress-per-ms across samples, so the
+    // ETA tracks the CURRENT speed rather than the average since the start.
+    var etaSmoothing = typeof config.etaSmoothing === "number" ? config.etaSmoothing : 0.35;
     // Where the "this browser already downloaded the fallback model" flag lives.
     // Keyed to the model+dtype, so a model/dtype change invalidates a stale
     // "ready". Cool Concepts passes "cc:tf" to keep its returning-visitor signal.
     var weightsFlagKey = config.weightsFlagKey || "browser_llm:tf-ready";
 
-    var onProgress   = config.onProgress   || noop;   // (pct, {loaded,total,files})
+    var onProgress   = config.onProgress   || noop;   // (pct, {loaded,total,files,etaMs,etaSeconds,bytesPerSec})
     var onModelReady = config.onModelReady || noop;   // ()
     var onModelError = config.onModelError || noop;   // (err)
     var onNanoStatus = config.onNanoStatus || noop;   // (nanoReady:boolean)
@@ -331,7 +341,68 @@ self.postMessage({ type: "boot" });
     var tfPrimary = false;            // true once transformers is THE brain (its progress may paint)
     var tf = null;                    // the transformers.js module (for main-thread TextStreamer)
 
+    // download-ETA estimation state
+    var etaStart = null;              // ms timestamp of the first progress sample
+    var etaLastT = null;              // ms timestamp of the last sample
+    var etaLastFrac = 0;              // last aggregate progress fraction (0..1)
+    var etaRate = null;               // smoothed progress fraction per ms (EMA)
+    var etaLastBytes = 0;             // last aggregate loaded bytes (0 when unknown)
+    var etaByteRate = null;           // smoothed bytes per ms (EMA), when byte totals are known
+
     function fireState() { try { onStateChange(); } catch (e) {} }
+
+    function resetEta() {
+      etaStart = null; etaLastT = null; etaLastFrac = 0;
+      etaRate = null; etaLastBytes = 0; etaByteRate = null;
+    }
+    // Feed one progress reading (frac in 0..1; byte counts optional, 0 when
+    // unknown) into the rate estimate.
+    function sampleProgress(frac, loadedBytes, totalBytes) {
+      if (typeof frac !== "number" || !isFinite(frac)) { return; }
+      if (frac < 0) { frac = 0; } else if (frac > 1) { frac = 1; }
+      var bytes = loadedBytes || 0;
+      var t = nowFn();
+      if (etaStart === null) {          // first sample: anchor, no rate yet
+        etaStart = t; etaLastT = t; etaLastFrac = frac; etaLastBytes = bytes;
+        return;
+      }
+      var dt = t - etaLastT;
+      if (dt <= 0) {                    // same tick / clock stall: only raise the level
+        if (frac > etaLastFrac) { etaLastFrac = frac; }
+        if (bytes > etaLastBytes) { etaLastBytes = bytes; }
+        return;
+      }
+      var dFrac = frac - etaLastFrac;   // progress since last sample (ignore regressions)
+      if (dFrac > 0) {
+        var instRate = dFrac / dt;      // fraction per ms
+        etaRate = (etaRate === null) ? instRate : (etaSmoothing * instRate + (1 - etaSmoothing) * etaRate);
+      }
+      var dBytes = bytes - etaLastBytes;
+      if (dBytes > 0) {
+        var instByte = dBytes / dt;     // bytes per ms
+        etaByteRate = (etaByteRate === null) ? instByte : (etaSmoothing * instByte + (1 - etaSmoothing) * etaByteRate);
+      }
+      etaLastT = t;
+      if (frac > etaLastFrac) { etaLastFrac = frac; }
+      if (bytes > etaLastBytes) { etaLastBytes = bytes; }
+    }
+    function bytesPerSecOrNull() { return (etaByteRate && etaByteRate > 0) ? Math.round(etaByteRate * 1000) : null; }
+    // Estimated time remaining for the in-flight model download, or null when
+    // there is nothing to estimate yet (no samples, or the rate has stalled).
+    // Shape: { etaMs, etaSeconds, bytesPerSec, loaded, total, pct, done }.
+    function downloadEta() {
+      var loaded = 0, total = 0, f;
+      for (f in dlFiles) { loaded += dlFiles[f].loaded; total += dlFiles[f].total; }
+      if (self_.modelReady || etaLastFrac >= 1) {
+        return { etaMs: 0, etaSeconds: 0, bytesPerSec: bytesPerSecOrNull(),
+          loaded: loaded, total: total, pct: self_.dlPct, done: true };
+      }
+      if (etaRate === null || etaRate <= 0) { return null; }   // not enough info yet / stalled
+      var remainingFrac = 1 - etaLastFrac;
+      var etaMs = remainingFrac / etaRate;
+      return { etaMs: etaMs, etaSeconds: Math.round(etaMs / 1000), bytesPerSec: bytesPerSecOrNull(),
+        loaded: loaded, total: total, pct: self_.dlPct, done: false };
+    }
 
     // ── returning-visitor cache probe ──────────────────────────────────────────
     function markTfReady() {          // the downloaded model finished loading this session
@@ -363,7 +434,15 @@ self.postMessage({ type: "boot" });
     function emitProgress() {
       var loaded = 0, total = 0, f;
       for (f in dlFiles) { loaded += dlFiles[f].loaded; total += dlFiles[f].total; }
-      try { onProgress(self_.dlPct, { loaded: loaded, total: total, files: dlFiles }); } catch (e) {}
+      var eta = downloadEta();
+      try {
+        onProgress(self_.dlPct, {
+          loaded: loaded, total: total, files: dlFiles,
+          etaMs: eta ? eta.etaMs : null,
+          etaSeconds: eta ? eta.etaSeconds : null,
+          bytesPerSec: eta ? eta.bytesPerSec : null
+        });
+      } catch (e) {}
     }
     // Fold one transformers.js download-progress event into the overall percent,
     // byte-weighted across files (a per-file max would jump to 100% the instant
@@ -380,6 +459,7 @@ self.postMessage({ type: "boot" });
       var loaded = 0, total = 0, f;
       for (f in dlFiles) { loaded += dlFiles[f].loaded; total += dlFiles[f].total; }
       self_.dlPct = total ? Math.round(loaded / total * 100) : 0;
+      if (total) { sampleProgress(loaded / total, loaded, total); }
       emitProgress();
     }
     // Nano's one-time built-in-model download (Chrome-managed, shared across
@@ -388,9 +468,12 @@ self.postMessage({ type: "boot" });
     function nanoMonitor(m) {
       if (!m || !m.addEventListener) { return; }
       m.addEventListener("downloadprogress", function (e) {
-        var p = (e && e.total && e.loaded > 1) ? e.loaded / e.total : (e ? e.loaded : 0);
+        var hasBytes = !!(e && e.total && e.loaded > 1);
+        var p = hasBytes ? e.loaded / e.total : (e ? e.loaded : 0);
         if (typeof p === "number" && isFinite(p)) {
           self_.dlPct = Math.max(self_.dlPct, Math.round(p * 100));
+          if (hasBytes) { sampleProgress(e.loaded / e.total, e.loaded, e.total); }
+          else { sampleProgress(p, 0, 0); }
           emitProgress();
         }
       });
@@ -679,7 +762,7 @@ self.postMessage({ type: "boot" });
           try { onModelReady(); } catch (e) {}
         },
         function (err) {
-          generatorPromise = null; self_.dlPct = 0; dlFiles = {};
+          generatorPromise = null; self_.dlPct = 0; dlFiles = {}; resetEta();
           try { onModelError(err); } catch (e) {}
         }
       );
@@ -756,6 +839,7 @@ self.postMessage({ type: "boot" });
     self_.workerSource = function () { return buildWorkerSource(TF_MODEL_ID, TF_DTYPE, transformersUrl); };
     self_.applyDlProgress = applyDlProgress;      // exposed for testing the byte-weighting
     self_.downloadFiles = function () { return dlFiles; };
+    self_.downloadEta = downloadEta;              // estimated time remaining for the model download
 
     return self_;
   }

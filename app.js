@@ -32,10 +32,11 @@
     : "This device can run a local model.";
 
   var llm = BrowserLLM.create({
-    onProgress: function (pct) {
+    onProgress: function (pct, info) {
       progressEl.hidden = false;
       barEl.style.width = Math.max(2, pct) + "%";
-      statusEl.textContent = "Downloading the fallback model… " + pct + "%";
+      var eta = (info && info.etaSeconds != null) ? " (~" + fmtEta(info.etaSeconds) + " left)" : "";
+      statusEl.textContent = "Downloading the fallback model… " + pct + "%" + eta;
     },
     onModelReady: function () {
       progressEl.hidden = true;
@@ -56,6 +57,13 @@
     if (typeof requestIdleCallback === "function") { requestIdleCallback(llm.prewarm); }
     else { setTimeout(llm.prewarm, 600); }
   });
+
+  // "1m 20s" / "45s" from a whole number of seconds.
+  function fmtEta(s) {
+    if (s < 60) { return s + "s"; }
+    var m = Math.floor(s / 60), r = s % 60;
+    return r ? (m + "m " + r + "s") : (m + "m");
+  }
 
   var busy = false;
   goBtn.addEventListener("click", function () {
