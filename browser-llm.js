@@ -159,6 +159,61 @@
     return true;
   }
 
+  // ── "can this device run a local model at all?" ─────────────────────────────
+  // A quick, synchronous verdict, so a caller can decide whether to even offer
+  // the feature. True when the device is not too slow AND at least one backend is
+  // viable: Chrome's Prompt API is present, OR the heavy SmolLM2 fallback can run
+  // here (i.e. not iOS/iPadOS, where it OOM-crashes the tab). This is a STATIC
+  // capability check — it does not confirm Nano is actually downloaded/available
+  // (that is async; see nanoStatus / a provider's prewarm), only that a path
+  // exists. An available Nano can still run on a device this calls "too slow",
+  // so treat a downloaded Nano as an override where you have that signal.
+  function canRun() {
+    if (tooSlowForLlm()) { return false; }
+    return (nanoApi() !== null) || !heavyModelUnsupported();
+  }
+
+  // Whether it is worth setting up cross-origin isolation (SharedArrayBuffer) so
+  // the downloaded SmolLM2 WASM model can use several threads. True only when the
+  // browser supports isolation and is not already isolated, the context is
+  // secure, service workers are available, the machine has >= 4 cores (a slower
+  // device never loads the heavy model), and there is NO Prompt API (Nano users
+  // never touch the WASM model). This is the gate a page's isolation bootstrap
+  // uses to decide whether to register its COOP/COEP service worker and reload
+  // into an isolated context — the single home for that "hardwareConcurrency"
+  // decision.
+  function shouldCrossOriginIsolate() {
+    if (typeof window === "undefined" || typeof navigator === "undefined") { return false; }
+    if (!("crossOriginIsolated" in window)) { return false; }   // old browser: single thread only
+    if (window.crossOriginIsolated) { return false; }           // already isolated: nothing to do
+    if (!window.isSecureContext) { return false; }
+    if (!("serviceWorker" in navigator)) { return false; }
+    if ((navigator.hardwareConcurrency || 0) < 4) { return false; }  // heavy model won't load anyway
+    if (nanoApi() !== null) { return false; }                   // Nano path: no WASM threads needed
+    return true;
+  }
+
+  // A full, synchronous capability snapshot — for introspection, debugging, or a
+  // one-call summary of everything above.
+  function capabilities() {
+    var nav = typeof navigator !== "undefined" ? navigator : {};
+    var isolated = typeof window !== "undefined" && !!window.crossOriginIsolated;
+    return {
+      canRun: canRun(),
+      tooSlow: tooSlowForLlm(),
+      hardwareConcurrency: nav.hardwareConcurrency || 0,
+      deviceMemory: typeof nav.deviceMemory === "number" ? nav.deviceMemory : null,
+      nano: { supported: nanoApi() !== null },        // API surface present (availability is async)
+      heavyModel: { supported: !heavyModelUnsupported() },
+      fastEnoughForBackground: fastEnoughForBackground(),
+      crossOriginIsolation: {
+        supported: typeof window !== "undefined" && ("crossOriginIsolated" in window),
+        active: isolated,
+        recommended: shouldCrossOriginIsolate()
+      }
+    };
+  }
+
   // ── the Prompt API (Gemini Nano) ────────────────────────────────────────────
 
   // Chrome's built-in Prompt API, if this browser has it: the modern global
@@ -829,6 +884,9 @@ self.postMessage({ type: "boot" });
     self_.heavyModelUnsupported = heavyModelUnsupported;
     self_.fastEnoughForBackground = fastEnoughForBackground;
     self_.emojiRenders = emojiRenders;
+    self_.canRun = canRun;
+    self_.shouldCrossOriginIsolate = shouldCrossOriginIsolate;
+    self_.capabilities = capabilities;
     self_.nanoApi = nanoApi;
     self_.nanoStatus = function () { return nanoStatus(nanoApi()); };
     self_.connectionBlock = connectionBlock;
@@ -859,6 +917,9 @@ self.postMessage({ type: "boot" });
     heavyModelUnsupported: heavyModelUnsupported,
     fastEnoughForBackground: fastEnoughForBackground,
     emojiRenders: emojiRenders,
+    canRun: canRun,
+    shouldCrossOriginIsolate: shouldCrossOriginIsolate,
+    capabilities: capabilities,
     // static Prompt API helpers
     nanoApi: nanoApi,
     nanoStatus: nanoStatus,

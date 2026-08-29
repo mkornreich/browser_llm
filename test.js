@@ -209,6 +209,60 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
     eq(e.bytesPerSec, 500, "ETA: 250 bytes in 0.5s → 500 B/s");
   })();
 
+  // ── canRun ────────────────────────────────────────────────────────────────────
+  function setWin(w) { Object.defineProperty(global, "window", { value: w, configurable: true, writable: true }); }
+  function clearWin() { Object.defineProperty(global, "window", { value: undefined, configurable: true, writable: true }); }
+  function setNano(on) {
+    if (on) { Object.defineProperty(global, "LanguageModel", { value: { create: function () {} }, configurable: true, writable: true }); }
+    else { Object.defineProperty(global, "LanguageModel", { value: undefined, configurable: true, writable: true }); }
+  }
+
+  setNav({ hardwareConcurrency: 8, deviceMemory: 8, userAgent: "Mozilla/5.0 (Windows NT 10.0)" });
+  setNano(false);
+  eq(BrowserLLM.canRun(), true, "canRun: fast desktop, heavy model supported → true");
+  setNav({ hardwareConcurrency: 2, userAgent: "Mozilla/5.0 (Windows NT 10.0)" });
+  eq(BrowserLLM.canRun(), false, "canRun: too slow → false");
+  setNav({ hardwareConcurrency: 8, deviceMemory: 8, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" });
+  setNano(false);
+  eq(BrowserLLM.canRun(), false, "canRun: iOS (no heavy model) + no Nano → false");
+  setNano(true);
+  eq(BrowserLLM.canRun(), true, "canRun: iOS but Prompt API present → true (Nano can run)");
+  setNano(false);
+
+  // ── shouldCrossOriginIsolate ──────────────────────────────────────────────────
+  setNav({ hardwareConcurrency: 8, serviceWorker: {} });
+  setWin({ crossOriginIsolated: false, isSecureContext: true });
+  setNano(false);
+  eq(BrowserLLM.shouldCrossOriginIsolate(), true, "shouldCOI: capable, not isolated, no Nano → true");
+  setWin({ crossOriginIsolated: true, isSecureContext: true });
+  eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: already isolated → false");
+  setWin({ crossOriginIsolated: false, isSecureContext: true });
+  setNav({ hardwareConcurrency: 2, serviceWorker: {} });
+  eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: < 4 cores → false");
+  setNav({ hardwareConcurrency: 8, serviceWorker: {} });
+  setNano(true);
+  eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: Prompt API present → false (Nano needs no threads)");
+  setNano(false);
+  setWin({ isSecureContext: true });   // no crossOriginIsolated support
+  eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: browser lacks isolation support → false");
+  clearWin();
+  eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: no window (Node) → false");
+
+  // ── capabilities snapshot ─────────────────────────────────────────────────────
+  setNav({ hardwareConcurrency: 8, deviceMemory: 8, userAgent: "Mozilla/5.0 (Windows NT 10.0)", serviceWorker: {} });
+  setWin({ crossOriginIsolated: false, isSecureContext: true });
+  setNano(false);
+  var cap = BrowserLLM.capabilities();
+  eq(cap.canRun, true, "capabilities.canRun");
+  eq(cap.hardwareConcurrency, 8, "capabilities.hardwareConcurrency");
+  eq(cap.deviceMemory, 8, "capabilities.deviceMemory");
+  eq(cap.nano.supported, false, "capabilities.nano.supported");
+  eq(cap.heavyModel.supported, true, "capabilities.heavyModel.supported");
+  eq(cap.crossOriginIsolation.recommended, true, "capabilities.crossOriginIsolation.recommended");
+  eq(cap.crossOriginIsolation.active, false, "capabilities.crossOriginIsolation.active");
+  clearWin();
+  setNano(false);
+
   clearNav();
 
   // ── summary ───────────────────────────────────────────────────────────────────
