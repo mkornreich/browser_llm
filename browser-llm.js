@@ -119,6 +119,19 @@
     return ok;
   }
 
+  // The minimum logical cores to bother running the heavy WASM model (or setting
+  // up threads for it). Below this, the downloaded model won't load at a usable
+  // speed, so we never try. This is the single home for the "hardwareConcurrency
+  // >= 4" threshold used by tooSlowForLlm() and shouldCrossOriginIsolate() (and
+  // that a page's cross-origin-isolation bootstrap mirrors inline).
+  var HEAVY_MODEL_MIN_CORES = 4;
+  // Does this machine have enough logical cores (>= HEAVY_MODEL_MIN_CORES) to run
+  // the heavy model / use WASM threads? Static; navigator.hardwareConcurrency.
+  function hasEnoughCores() {
+    if (typeof navigator === "undefined") { return false; }
+    return (navigator.hardwareConcurrency || 0) >= HEAVY_MODEL_MIN_CORES;
+  }
+
   // A really slow or old device cannot run a local model at a usable speed: the
   // caller should hide "explain" there and never load or download a model.
   // Chrome's built-in Nano is exempt once it is actually AVAILABLE — Chrome only
@@ -126,7 +139,7 @@
   // check nanoReady separately and let an available Nano override this.
   function tooSlowForLlm() {
     if (typeof navigator === "undefined") { return true; }
-    if ((navigator.hardwareConcurrency || 0) < 4) { return true; }
+    if (!hasEnoughCores()) { return true; }
     if (typeof navigator.deviceMemory === "number" && navigator.deviceMemory < 4) { return true; }
     if (!emojiRenders()) { return true; }   // no color emoji = an old system
     return false;
@@ -188,7 +201,7 @@
     if (window.crossOriginIsolated) { return false; }           // already isolated: nothing to do
     if (!window.isSecureContext) { return false; }
     if (!("serviceWorker" in navigator)) { return false; }
-    if ((navigator.hardwareConcurrency || 0) < 4) { return false; }  // heavy model won't load anyway
+    if (!hasEnoughCores()) { return false; }                    // heavy model won't load anyway
     if (nanoApi() !== null) { return false; }                   // Nano path: no WASM threads needed
     return true;
   }
@@ -202,6 +215,7 @@
       canRun: canRun(),
       tooSlow: tooSlowForLlm(),
       hardwareConcurrency: nav.hardwareConcurrency || 0,
+      enoughCores: hasEnoughCores(),                  // >= HEAVY_MODEL_MIN_CORES
       deviceMemory: typeof nav.deviceMemory === "number" ? nav.deviceMemory : null,
       nano: { supported: nanoApi() !== null },        // API surface present (availability is async)
       heavyModel: { supported: !heavyModelUnsupported() },
@@ -885,6 +899,7 @@ self.postMessage({ type: "boot" });
     self_.fastEnoughForBackground = fastEnoughForBackground;
     self_.emojiRenders = emojiRenders;
     self_.canRun = canRun;
+    self_.hasEnoughCores = hasEnoughCores;
     self_.shouldCrossOriginIsolate = shouldCrossOriginIsolate;
     self_.capabilities = capabilities;
     self_.nanoApi = nanoApi;
@@ -918,6 +933,8 @@ self.postMessage({ type: "boot" });
     fastEnoughForBackground: fastEnoughForBackground,
     emojiRenders: emojiRenders,
     canRun: canRun,
+    hasEnoughCores: hasEnoughCores,
+    HEAVY_MODEL_MIN_CORES: HEAVY_MODEL_MIN_CORES,
     shouldCrossOriginIsolate: shouldCrossOriginIsolate,
     capabilities: capabilities,
     // static Prompt API helpers

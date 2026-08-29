@@ -217,6 +217,17 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
     else { Object.defineProperty(global, "LanguageModel", { value: undefined, configurable: true, writable: true }); }
   }
 
+  // ── hasEnoughCores / threshold constant ───────────────────────────────────────
+  eq(BrowserLLM.HEAVY_MODEL_MIN_CORES, 4, "HEAVY_MODEL_MIN_CORES constant = 4");
+  setNav({ hardwareConcurrency: 4 });
+  eq(BrowserLLM.hasEnoughCores(), true, "hasEnoughCores: 4 cores → true (>= 4)");
+  setNav({ hardwareConcurrency: 3 });
+  eq(BrowserLLM.hasEnoughCores(), false, "hasEnoughCores: 3 cores → false");
+  setNav({});   // hardwareConcurrency undefined → 0
+  eq(BrowserLLM.hasEnoughCores(), false, "hasEnoughCores: unreported cores → false");
+  clearNav();
+  eq(BrowserLLM.hasEnoughCores(), false, "hasEnoughCores: no navigator → false");
+
   setNav({ hardwareConcurrency: 8, deviceMemory: 8, userAgent: "Mozilla/5.0 (Windows NT 10.0)" });
   setNano(false);
   eq(BrowserLLM.canRun(), true, "canRun: fast desktop, heavy model supported → true");
@@ -255,6 +266,7 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   var cap = BrowserLLM.capabilities();
   eq(cap.canRun, true, "capabilities.canRun");
   eq(cap.hardwareConcurrency, 8, "capabilities.hardwareConcurrency");
+  eq(cap.enoughCores, true, "capabilities.enoughCores");
   eq(cap.deviceMemory, 8, "capabilities.deviceMemory");
   eq(cap.nano.supported, false, "capabilities.nano.supported");
   eq(cap.heavyModel.supported, true, "capabilities.heavyModel.supported");

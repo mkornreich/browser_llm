@@ -59,12 +59,13 @@ Before it tries anything, the library answers "should we even run a model here?"
 | `BrowserLLM.tooSlowForLlm()` | `true` on a device too slow/old for a usable local model (< 4 cores, < 4 GB where reported, or no color-emoji support = a very old system). An **available Nano overrides this** — Chrome only ships Nano to vetted hardware. |
 | `BrowserLLM.heavyModelUnsupported()` | `true` on iOS/iPadOS, where the ~360 MB WASM fallback OOM-crashes the tab. Those devices can still use Nano; they just never download SmolLM2. |
 | `BrowserLLM.fastEnoughForBackground()` | `true` on desktop-class hardware (≥ 8 cores, ≥ 8 GB) that can afford speculative background generation. |
-| `BrowserLLM.shouldCrossOriginIsolate()` | `true` when it's worth setting up cross-origin isolation (SharedArrayBuffer) so the WASM fallback can use several threads: isolation is supported and not already active, secure context, service worker available, **≥ 4 cores** (`hardwareConcurrency`), and no Prompt API. The single home for a page's isolation-bootstrap gate. |
+| `BrowserLLM.hasEnoughCores()` | `true` when `navigator.hardwareConcurrency >= BrowserLLM.HEAVY_MODEL_MIN_CORES` (4) — the single home for the "enough cores to bother with the heavy WASM model / threads" threshold, used by `tooSlowForLlm()` and `shouldCrossOriginIsolate()`. |
+| `BrowserLLM.shouldCrossOriginIsolate()` | `true` when it's worth setting up cross-origin isolation (SharedArrayBuffer) so the WASM fallback can use several threads: isolation is supported and not already active, secure context, service worker available, **≥ 4 cores** (`hasEnoughCores()`), and no Prompt API. The single home for a page's isolation-bootstrap gate. |
 | `BrowserLLM.capabilities()` | A full synchronous snapshot: `{ canRun, tooSlow, hardwareConcurrency, deviceMemory, nano:{supported}, heavyModel:{supported}, fastEnoughForBackground, crossOriginIsolation:{supported, active, recommended} }`. |
 | `provider.connectionBlock()` | A human message when the ~360 MB fallback should **not** auto-download right now (offline / Data Saver / 2G), or `null` to go ahead. A returning visitor whose weights are cached always gets `null`. |
 | `provider.llmDownloadBlock()` | Like `connectionBlock()`, but returns `null` first if Nano can serve the request (Nano manages its own small download). |
 
-`canRun`, `tooSlowForLlm`, `heavyModelUnsupported`, `fastEnoughForBackground`, `shouldCrossOriginIsolate`, `capabilities`, `emojiRenders`, `nanoApi`, `nanoStatus`, and `replyOf` are available both **statically** (`BrowserLLM.x`) and on a provider instance.
+`canRun`, `tooSlowForLlm`, `heavyModelUnsupported`, `fastEnoughForBackground`, `hasEnoughCores`, `shouldCrossOriginIsolate`, `capabilities`, `emojiRenders`, `nanoApi`, `nanoStatus`, and `replyOf` are available both **statically** (`BrowserLLM.x`) and on a provider instance.
 
 ## API
 
