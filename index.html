@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser LLM</title>
+  <meta name="description" content="Get an on-device language model in the browser — Gemini Nano first, SmolLM2 as the fallback. No server, no keys.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Browser LLM</h1>
+    <p class="lede">
+      One tiny library that <strong>gets you a language model in the browser</strong>.
+      It uses Chrome's built-in <strong>Gemini Nano</strong> (the Prompt API) when it
+      is there — nothing to download — and falls back to downloading
+      <strong>SmolLM2-360M</strong> via transformers.js when it is not. Same
+      <code>generate()</code> either way. Everything runs on your device; no text
+      ever leaves the page.
+    </p>
+
+    <section class="models">
+      <div class="model" id="model-nano">
+        <h2>Gemini Nano <span class="tag">main</span></h2>
+        <dl>
+          <dt>backend</dt><dd>Chrome Prompt API</dd>
+          <dt>context window</dt><dd id="ctx-nano">—</dd>
+          <dt>on this device</dt><dd id="status-nano">checking…</dd>
+        </dl>
+      </div>
+      <div class="model" id="model-smol">
+        <h2>SmolLM2-360M <span class="tag alt">fallback</span></h2>
+        <dl>
+          <dt>backend</dt><dd>transformers.js (WASM)</dd>
+          <dt>context window</dt><dd id="ctx-smol">—</dd>
+          <dt>download</dt><dd id="status-smol">~360 MB, one time</dd>
+        </dl>
+      </div>
+    </section>
+
+    <p class="device" id="device-note"></p>
+
+    <section class="try">
+      <label for="prompt">Ask it something</label>
+      <textarea id="prompt" rows="3" placeholder="What is photosynthesis?">What is photosynthesis?</textarea>
+      <div class="row">
+        <button id="go" type="button">Generate</button>
+        <span id="backend-note" class="backend"></span>
+      </div>
+      <div id="progress" class="progress" hidden><div id="bar"></div></div>
+      <div id="status" class="status"></div>
+      <pre id="out" class="out" aria-live="polite"></pre>
+    </section>
+
+    <section class="use">
+      <h2>Use it in your own code</h2>
+      <pre class="code">&lt;script src="browser-llm.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const llm = BrowserLLM.create();
+  const brain = await llm.loadGenerator();          // Nano, or SmolLM2 if no Nano
+  const text = await brain.generate(
+    [{ role: "user", content: 'What is "photosynthesis"?' }],
+    { max_new_tokens: 72, temperature: 0.6 },
+    partial =&gt; { /* live tokens */ });
+&lt;/script&gt;</pre>
+      <p>
+        See <a href="README.md">README.md</a> for the full API, the device and
+        connection gates, and how it plugs into
+        <a href="https://mkornreich.me/projects/coolconcepts/">Cool Concepts</a>.
+      </p>
+    </section>
+  </main>
+
+  <script src="browser-llm.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
