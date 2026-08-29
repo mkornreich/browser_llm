@@ -325,6 +325,7 @@ self.postMessage({ type: "boot" });
     var self_ = {
       // public, read-only-ish state (mirrors Cool Concepts' flags)
       modelReady: false,
+      loading: false,         // a brain build is in flight (started, not yet ready/failed)
       nanoReady: false,       // built-in AI usable now (runs offline)
       weightsCached: false,   // the fallback model already downloaded on this device
       dlPct: 0,               // overall model-download %, byte-weighted across files
@@ -754,16 +755,19 @@ self.postMessage({ type: "boot" });
     // later call can retry.
     function loadGenerator() {
       if (generatorPromise) { return generatorPromise; }
+      self_.loading = true;           // a build is now in flight
+      fireState();
       generatorPromise = buildBrain();
       generatorPromise.then(
         function () {
-          self_.modelReady = true;
+          self_.modelReady = true; self_.loading = false;
           fireState();
           try { onModelReady(); } catch (e) {}
         },
         function (err) {
-          generatorPromise = null; self_.dlPct = 0; dlFiles = {}; resetEta();
-          try { onModelError(err); } catch (e) {}
+          generatorPromise = null; self_.loading = false;
+          self_.dlPct = 0; dlFiles = {}; resetEta();
+          try { onModelError(err); } catch (e) {}   // caller re-syncs; no UI hook, matching a silent reset
         }
       );
       return generatorPromise;
