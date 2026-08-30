@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Browser LLM</title>
   <meta name="description" content="Get an on-device language model in the browser — Gemini Nano first, SmolLM2 as the fallback. No server, no keys.">
+  <!-- Cross-origin isolation, so the downloaded SmolLM2 WASM fallback can run
+       multithreaded. Runs first (before the model loads) so its one-time reload
+       happens up front; it self-skips for Nano users, crawlers, and browsers that
+       can't isolate. require-corp works on every browser incl. Firefox (and Android,
+       which has no credentialless). See coi-serviceworker.js. -->
+  <script>window.coi = { coepCredentialless: false };</script>
+  <script src="coi-serviceworker.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -69,9 +76,21 @@
         <a href="https://mkornreich.me/projects/coolconcepts/">Cool Concepts</a>.
       </p>
     </section>
+
+    <details class="diag">
+      <summary>Threading diagnostics</summary>
+      <p>
+        Whether this browser runs the SmolLM2 WASM fallback multithreaded — the
+        document, the model worker, and a nested (pthread-style) worker must all be
+        cross-origin isolated. Also at <a href="coi-probe.html">coi-probe.html</a>.
+      </p>
+      <pre id="coi-report" class="out">—</pre>
+    </details>
   </main>
 
   <script src="browser-llm.js"></script>
   <script src="app.js"></script>
+  <script src="coi-probe.js"></script>
+  <script>COIProbe.render("#coi-report");</script>
 </body>
 </html>

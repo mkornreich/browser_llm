@@ -259,6 +259,19 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   clearWin();
   eq(BrowserLLM.shouldCrossOriginIsolate(), false, "shouldCOI: no window (Node) → false");
 
+  // ── coi-probe: planned thread count stays in sync with browser-llm.js ─────────
+  // Must equal the worker's numThreads: coi ? min(4, max(2, cores>>1)) : 1.
+  var COIProbe = require("./coi-probe.js");
+  setNav({ hardwareConcurrency: 24 });
+  eq(COIProbe.plannedThreads(true), 4, "probe threads: 24 cores isolated → 4 (cap)");
+  eq(COIProbe.plannedThreads(false), 1, "probe threads: not isolated → 1");
+  setNav({ hardwareConcurrency: 6 });
+  eq(COIProbe.plannedThreads(true), 3, "probe threads: 6 cores isolated → 3");
+  setNav({ hardwareConcurrency: 4 });
+  eq(COIProbe.plannedThreads(true), 2, "probe threads: 4 cores isolated → 2 (floor)");
+  setNav({});   // hardwareConcurrency undefined → 0
+  eq(COIProbe.plannedThreads(true), 2, "probe threads: unknown cores isolated → 2 (floor)");
+
   // ── capabilities snapshot ─────────────────────────────────────────────────────
   setNav({ hardwareConcurrency: 8, deviceMemory: 8, userAgent: "Mozilla/5.0 (Windows NT 10.0)", serviceWorker: {} });
   setWin({ crossOriginIsolated: false, isSecureContext: true });
