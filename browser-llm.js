@@ -368,7 +368,7 @@
   // when the browser cannot run a module worker that imports from a CDN.
   function buildWorkerSource(modelId, dtype, transformersUrl) {
     return `
-import { pipeline, TextStreamer, env } from "${transformersUrl}";
+import { pipeline, TextStreamer, InterruptableStoppingCriteria, env } from "${transformersUrl}";
 // SIMD is on by default (needs no cross-origin isolation; the scalar build is
 // 2-4x slower). Threads DO need crossOriginIsolated (SharedArrayBuffer). When
 // isolated, use ~half the logical cores (>=2, capped at 4) - decode is only
@@ -413,13 +413,24 @@ self.onmessage = async function (e) {
       var o = { max_new_tokens: opts.max_new_tokens, do_sample: true,
         top_p: opts.top_p || 0.9, temperature: opts.temperature,
         repetition_penalty: opts.repetition_penalty || 1.15 };
+      // Optional decoding constraints (transformers.js logits processors), forwarded only when set.
+      if (typeof opts.no_repeat_ngram_size === "number") o.no_repeat_ngram_size = opts.no_repeat_ngram_size;
+      if (typeof opts.top_k === "number") o.top_k = opts.top_k;
+      if (opts.bad_words_ids) o.bad_words_ids = opts.bad_words_ids;
+      // Stop sequences: transformers.js 4.2.0 has no stop_strings config, so emulate it by
+      // interrupting generation from the stream callback once the output contains a stop string.
+      var stops = Array.isArray(opts.stop_strings) ? opts.stop_strings.filter(Boolean) : null;
+      var stopper = (stops && stops.length && InterruptableStoppingCriteria) ? new InterruptableStoppingCriteria() : null;
+      if (stopper) { o.stopping_criteria = stopper; }
       if (msg.stream && gen.tokenizer && TextStreamer) {
         var streamed = "";
         o.streamer = new TextStreamer(gen.tokenizer, {
           skip_prompt: true,
           callback_function: function (chunk) {
             streamed += chunk;
-            self.postMessage({ type: "token", id: id, text: streamed.replace(/<\\|[^|]*\\|>/g, "") });
+            var clean = streamed.replace(/<\\|[^|]*\\|>/g, "");
+            self.postMessage({ type: "token", id: id, text: clean });
+            if (stopper) { for (var si = 0; si < stops.length; si++) { if (clean.indexOf(stops[si]) !== -1) { stopper.interrupt(); break; } } }
           }
         });
       }
@@ -837,13 +848,24 @@ self.postMessage({ type: "boot" });
           var o = { max_new_tokens: opts.max_new_tokens, do_sample: true,
             top_p: opts.top_p || 0.9, temperature: opts.temperature,
             repetition_penalty: opts.repetition_penalty || 1.15 };
+          // Optional decoding constraints (transformers.js logits processors), forwarded only when set.
+          if (typeof opts.no_repeat_ngram_size === "number") o.no_repeat_ngram_size = opts.no_repeat_ngram_size;
+          if (typeof opts.top_k === "number") o.top_k = opts.top_k;
+          if (opts.bad_words_ids) o.bad_words_ids = opts.bad_words_ids;
+          // Stop sequences: emulate via an interruptable stopping criteria driven by the stream (4.2.0
+          // has no stop_strings config).
+          var stops = Array.isArray(opts.stop_strings) ? opts.stop_strings.filter(Boolean) : null;
+          var stopper = (stops && stops.length && tf && tf.InterruptableStoppingCriteria) ? new tf.InterruptableStoppingCriteria() : null;
+          if (stopper) { o.stopping_criteria = stopper; }
           if (onToken && tf && tf.TextStreamer && gen.tokenizer) {
             var streamed = "";
             o.streamer = new tf.TextStreamer(gen.tokenizer, {
               skip_prompt: true,
               callback_function: function (chunk) {
                 streamed += chunk;
-                onToken(streamed.replace(/<\|[^|]*\|>/g, ""));
+                var clean = streamed.replace(/<\|[^|]*\|>/g, "");
+                onToken(clean);
+                if (stopper) { for (var si = 0; si < stops.length; si++) { if (clean.indexOf(stops[si]) !== -1) { stopper.interrupt(); break; } } }
               }
             });
           }
