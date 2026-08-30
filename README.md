@@ -57,7 +57,7 @@ Before it tries anything, the library answers "should we even run a model here?"
 | --- | --- |
 | `BrowserLLM.canRun()` | `true` when this device can run **some** local model: not too slow, and either the Prompt API is present or the heavy fallback can run here. The one-call "should I even offer this?" check. (Static capability — it doesn't confirm Nano is downloaded; that's async.) |
 | `BrowserLLM.tooSlowForLlm()` | `true` on a device too slow/old for a usable local model (< 4 cores, < 4 GB where reported, or no color-emoji support = a very old system). An **available Nano overrides this** — Chrome only ships Nano to vetted hardware. |
-| `BrowserLLM.heavyModelUnsupported()` | `true` on iOS/iPadOS, where the ~360 MB WASM fallback OOM-crashes the tab. Those devices can still use Nano; they just never download SmolLM2. |
+| `BrowserLLM.heavyModelUnsupported()` | `true` on iOS/iPadOS, where the ~360 MB WASM fallback OOM-crashes the tab. Those devices can still use Nano; they just never download SmolLM2 — **unless** the provider was created with `allowConstrainedDevice: true` (for a small enough model that fits the memory cap). |
 | `BrowserLLM.fastEnoughForBackground()` | `true` on desktop-class hardware (≥ 8 cores, ≥ 8 GB) that can afford speculative background generation. |
 | `BrowserLLM.hasEnoughCores()` | `true` when `navigator.hardwareConcurrency >= BrowserLLM.HEAVY_MODEL_MIN_CORES` (4) — the single home for the "enough cores to bother with the heavy WASM model / threads" threshold, used by `tooSlowForLlm()` and `shouldCrossOriginIsolate()`. |
 | `BrowserLLM.shouldCrossOriginIsolate()` | `true` when it's worth setting up cross-origin isolation (SharedArrayBuffer) so the WASM fallback can use several threads: isolation is supported and not already active, secure context, service worker available, **≥ 4 cores** (`hasEnoughCores()`), and no Prompt API. The single home for a page's isolation-bootstrap gate. |
@@ -82,6 +82,7 @@ Before it tries anything, the library answers "should we even run a model here?"
 | `transformersUrl` | jsDelivr `@huggingface/transformers@4.2.0` | Where transformers.js is imported from. |
 | `weightsFlagKey` | `"browser_llm:tf-ready"` | `localStorage` key for the "already downloaded here" flag. |
 | `modelId` / `dtype` | SmolLM2-360M / `int8` | Override the fallback model. |
+| `allowConstrainedDevice` | `false` | Run the on-device model even where `heavyModelUnsupported()` normally hard-stops it (iOS/iPadOS Safari, where the ~365 MB default OOM-crashes the tab). Set this **only** when your `modelId`/`dtype` is small enough to fit that memory cap — e.g. a ~137 MB int8 model. |
 | `workerBootTimeoutMs` | `20000` | How long to wait for the worker to boot before falling back to the main thread. |
 | `etaSmoothing` | `0.35` | EMA weight (0–1) for the download-rate estimate behind `downloadEta()`; higher tracks the latest speed more closely. |
 | `now` | `performance.now` | Clock for the ETA estimate. Injectable for deterministic testing. |

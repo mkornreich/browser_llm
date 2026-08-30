@@ -363,6 +363,27 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   var r10 = await BrowserLLM.generateWithRetry(b10, [], { timeout: true, timeoutMs: 20 });
   eq(r10, null, "generateWithRetry: timeout:true forces timeout on Nano → null");
 
+  // ── allowConstrainedDevice: let a small-model caller run on iOS/iPadOS ─────────
+  // On iOS the loader normally hard-stops (heavyModelUnsupported). The opt-in
+  // bypasses that. There is no real browser here, so the opt-in path fails LATER
+  // (missing worker / transformers) with a DIFFERENT error — which is exactly
+  // what proves the hard-stop was skipped.
+  setNav({ userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", hardwareConcurrency: 6 });
+  try {
+    await BrowserLLM.create({ transformersUrl: "file:///no-tf.mjs", workerBootTimeoutMs: 50 }).loadGenerator();
+    ok(false, "iOS default loadGenerator should reject");
+  } catch (e) {
+    ok(/unsupported on this device/.test(String(e && e.message)),
+      "iOS without opt-in: loader hard-stops with the unsupported error");
+  }
+  try {
+    await BrowserLLM.create({ allowConstrainedDevice: true, transformersUrl: "file:///no-tf.mjs", workerBootTimeoutMs: 50 }).loadGenerator();
+    ok(false, "iOS opt-in loadGenerator should still reject (no browser deps here)");
+  } catch (e) {
+    ok(!/unsupported on this device/.test(String(e && e.message)),
+      "iOS with allowConstrainedDevice: hard-stop skipped (fails later on missing deps)");
+  }
+
   clearNav();
 
   // ── summary ───────────────────────────────────────────────────────────────────

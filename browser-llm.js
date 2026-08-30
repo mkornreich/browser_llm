@@ -480,6 +480,12 @@ self.postMessage({ type: "boot" });
     var smol = MODELS.smol;
     var TF_MODEL_ID = config.modelId || smol.id;
     var TF_DTYPE = config.dtype || smol.dtype;
+    // Opt-in for a caller whose configured model is small enough to run within a
+    // constrained device's memory. heavyModelUnsupported() hard-stops the
+    // on-device model on iOS/iPadOS because the ~365 MB default OOM-crashes the
+    // tab there; a caller running a much smaller model (e.g. a ~137 MB int8 one)
+    // can set this to run it on those devices anyway.
+    var allowConstrained = !!config.allowConstrainedDevice;
     var TF_TAG = TF_MODEL_ID + "|" + TF_DTYPE;
     var TF_CONFIG_URL = "https://huggingface.co/" + TF_MODEL_ID + "/resolve/main/config.json";
 
@@ -877,10 +883,11 @@ self.postMessage({ type: "boot" });
 
     // The heavy fallback, memoized so a page-load prefetch and the click path
     // share one download. Worker first; main thread only where a module worker
-    // cannot be used. Hard-stops on devices where the model OOM-crashes the tab.
+    // cannot be used. Hard-stops on devices where the model OOM-crashes the tab,
+    // unless the caller opted in via allowConstrainedDevice (a small enough model).
     function loadTfPipeline() {
       if (tfPipelinePromise) { return tfPipelinePromise; }
-      if (heavyModelUnsupported()) {
+      if (heavyModelUnsupported() && !allowConstrained) {
         return Promise.reject(new Error("on-device model unsupported on this device"));
       }
       tfSpareDropped = false;
