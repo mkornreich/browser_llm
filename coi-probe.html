@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cross-origin isolation probe</title>
+  <meta name="robots" content="noindex">
+  <!-- Force require-corp (works on Firefox incl. Android) and bypass the capability
+       gate so this page always attempts isolation — it's a diagnostic. This loads
+       the service worker, so on first open it reloads once, then reports the truth
+       for whatever browser you're in (try a Firefox private window). -->
+  <script>window.coi = { coepCredentialless: false, force: true };</script>
+  <script src="coi-serviceworker.js"></script>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    pre { background: #f4f4f5; padding: 1rem; border-radius: 6px; white-space: pre-wrap; }
+    @media (prefers-color-scheme: dark) { body { background:#18181b; color:#e4e4e7; } pre { background:#27272a; } }
+    .muted { color: #71717a; }
+  </style>
+</head>
+<body>
+  <h1>Cross-origin isolation probe</h1>
+  <p class="muted">
+    Whether this browser can run the SmolLM2 WASM fallback multithreaded. Checks the
+    document, the model worker, and a nested (pthread-style) worker. Open it in a
+    Firefox private window to confirm private-mode isolation works on Firefox&nbsp;140+.
+  </p>
+  <pre id="coi-report">Loading…</pre>
+  <p class="muted">
+    First open reloads once while the service worker takes control. If it says the
+    document isn't isolated after that, this browser can't isolate via a service
+    worker and the library falls back to single-threaded — which is expected on
+    Firefox private &lt;&nbsp;140, old Safari, or with site storage disabled.
+  </p>
+  <script src="coi-probe.js"></script>
+  <script>COIProbe.render("#coi-report");</script>
+</body>
+</html>

@@ -127,6 +127,23 @@ Cool Concepts today has all of this inline in its `index.html`. Swapping in this
 
 The generation retry loop, the badness filter, the prompts, and the `PostProcessor` text clean-up stay in Cool Concepts — this library only produces the brain and reports its state. The Cool Concepts repo is **not** modified here.
 
+## Cross-origin isolation (multithreaded WASM)
+
+The downloaded SmolLM2 fallback runs on ONNX Runtime Web. It uses SIMD for free, but to use **WASM threads** it needs `SharedArrayBuffer`, which the browser only exposes when the document is `crossOriginIsolated` — i.e. served with `Cross-Origin-Opener-Policy: same-origin` **and** `Cross-Origin-Embedder-Policy: require-corp`. Both `numThreads` sites in `browser-llm.js` already gate on `crossOriginIsolated` (`numThreads = coi ? min(4, max(2, cores>>1)) : 1`), so the only missing piece is establishing isolation. GitHub Pages can't set response headers, so `coi-serviceworker.js` injects them client-side.
+
+**How `coi-serviceworker.js` works.** Loaded as a plain `<script src>` it runs in two globals: in the page it registers itself as a service worker and reloads once so the worker controls the document; in the service worker it re-serves every response with COOP/COEP added. The gate mirrors `shouldCrossOriginIsolate()` (≥ 4 cores, secure context, service worker available, **no** Prompt API), so Nano users and low-end devices never pay the reload. It **self-heals**: if a worker controls the page but isolation still didn't take (old Safari; Firefox private &lt; 140), it sets a `localStorage` flag, drops the worker, and runs single-threaded forever after — no reload loop.
+
+- **COEP is `require-corp`, not `credentialless`.** jsdelivr sends `Cross-Origin-Resource-Policy` + `Access-Control-Allow-Origin`, the Hugging Face weight CDN sends `Access-Control-Allow-Origin`, and ES-module imports are CORS-mode — so require-corp works end to end, and it's the **only** COEP value Firefox for Android supports (no credentialless there). Flip with `window.coi = { coepCredentialless: true }` only if you add a cross-origin asset lacking CORP.
+- **Firefox.** Works in normal windows (SAB since FF79, module workers FF111). In **private windows** it works on **Firefox 140+** (2025-06-24), when service workers shipped in Private Browsing — below that the self-heal falls back to single-thread. Isolation is inherited by the Blob module worker and ORT's nested pthread workers, so threads reach the model.
+- **Simpler alternative.** On a host that can set headers (Cloudflare Pages / Netlify / Vercel `_headers`), drop the service worker entirely — a real COOP/COEP response is isolated with no reload and works in Firefox private on every version.
+
+```html
+<script>window.coi = { coepCredentialless: false };</script>   <!-- before the SW; require-corp -->
+<script src="coi-serviceworker.js"></script>                   <!-- same-origin, root scope, plain script -->
+```
+
+Open **`coi-probe.html`** in any browser (including a Firefox private window) to see the verdict: it checks `crossOriginIsolated` + a live `SharedArrayBuffer` in the document, the model worker, and a nested pthread-style worker, and reports the thread count the library would pick.
+
 ## Compatibility
 
 Same floor as the Cool Concepts app script: `async`/`await`, arrow functions, and template literals are used, but no `for await`, no bare `import()` (built with `new Function`), and no optional chaining — so any browser that can parse the host page's app script can parse this too, and older ones fall through untouched.
@@ -136,7 +153,9 @@ Same floor as the Cool Concepts app script: `async`/`await`, arrow functions, an
 | File | What |
 | --- | --- |
 | `browser-llm.js` | The library. Model catalog + context windows, device/connection gates, and the Nano→SmolLM2 brain. |
-| `index.html` / `app.js` / `style.css` | The demo page. |
+| `coi-serviceworker.js` | Client-side cross-origin isolation (COOP/COEP injection + register/reload/self-heal), so the SmolLM2 fallback can run multithreaded on a header-less host. |
+| `coi-probe.js` / `coi-probe.html` | Runtime diagnostic: does *this* browser isolate the document, the model worker, and a nested pthread worker? |
+| `index.html` / `app.js` / `style.css` | The demo page (loads the service worker and shows the probe). |
 | `test.js` | Dependency-free test suite for the pure logic — run `node test.js`. |
 
 ## Credits
