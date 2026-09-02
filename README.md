@@ -82,6 +82,7 @@ Before it tries anything, the library answers "should we even run a model here?"
 | `transformersUrl` | jsDelivr `@huggingface/transformers@4.2.0` | Where transformers.js is imported from. |
 | `weightsFlagKey` | `"browser_llm:tf-ready"` | `localStorage` key for the "already downloaded here" flag. |
 | `modelId` / `dtype` | SmolLM2-360M / `int8` | Override the fallback model. |
+| `nanoOnly` | `false` | Use Chrome's built-in **Gemini Nano exclusively** — never download or fall back to SmolLM2. `loadGenerator()` throws instead of falling back when Nano is absent or fails to start, and prewarm never prefetches the fallback weights. Pair with `capabilities().nano.supported` to hide your AI UI where Nano isn't present. |
 | `allowConstrainedDevice` | `false` | Run the on-device model even where `heavyModelUnsupported()` normally hard-stops it (iOS/iPadOS Safari, where the ~365 MB default OOM-crashes the tab). Set this **only** when your `modelId`/`dtype` is small enough to fit that memory cap — e.g. a ~137 MB int8 model. |
 | `workerBootTimeoutMs` | `20000` | How long to wait for the worker to boot before falling back to the main thread. |
 | `etaSmoothing` | `0.35` | EMA weight (0–1) for the download-rate estimate behind `downloadEta()`; higher tracks the latest speed more closely. |
