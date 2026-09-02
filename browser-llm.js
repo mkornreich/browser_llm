@@ -486,6 +486,11 @@ self.postMessage({ type: "boot" });
     // tab there; a caller running a much smaller model (e.g. a ~137 MB int8 one)
     // can set this to run it on those devices anyway.
     var allowConstrained = !!config.allowConstrainedDevice;
+    // Nano-only mode: use Chrome's built-in Gemini Nano (Prompt API) exclusively and NEVER download
+    // or fall back to the SmolLM2 model. buildBrain() throws instead of falling back when Nano is
+    // absent or fails to start, and prewarm never prefetches the fallback weights. For callers that
+    // only want the zero-download built-in model.
+    var nanoOnly = !!config.nanoOnly;
     var TF_TAG = TF_MODEL_ID + "|" + TF_DTYPE;
     var TF_CONFIG_URL = "https://huggingface.co/" + TF_MODEL_ID + "/resolve/main/config.json";
 
@@ -922,8 +927,15 @@ self.postMessage({ type: "boot" });
             if (warm && warm.destroy) { try { warm.destroy(); } catch (e) { /* ignore */ } }
             dropTfSpare();   // Nano is the brain: free any prefetched spare (files stay cached)
             return makeNanoBrain(api);
-          } catch (e) { /* Nano failed to start → fall through to transformers */ }
+          } catch (e) {
+            if (nanoOnly) { throw e; }   // nanoOnly: surface the Nano error, never fall back to SmolLM2
+            /* Nano failed to start → fall through to transformers */
+          }
+        } else if (nanoOnly) {
+          throw new Error("browser_llm: nanoOnly is set but Gemini Nano is unavailable (status: " + status + ").");
         }
+      } else if (nanoOnly) {
+        throw new Error("browser_llm: nanoOnly is set but the Gemini Nano Prompt API is not present.");
       }
       tfPrimary = true;                // transformers is the brain: its progress may paint
       return await loadTfPipeline();   // no usable built-in AI → download our own model
@@ -979,9 +991,12 @@ self.postMessage({ type: "boot" });
       if (generatorPromise || self_.modelReady) { return; }
       if (tooSlowForLlm() && !self_.nanoReady) { return; }   // weak device: no model, ever
       var api = nanoApi();
+      if (nanoOnly && !api) { return; }   // nanoOnly: no Prompt API → nothing to prewarm (never SmolLM2)
       if (api) {
         nanoStatus(api).then(function (st) {
           if (st === "downloadable" || st === "downloading") {
+            // nanoOnly: do NOT prefetch the SmolLM2 fallback; Nano installs on the first user gesture.
+            if (nanoOnly) { return; }
             // Installing Nano needs a user gesture (Chrome refuses silent model
             // downloads), so its create() waits for the first click. Meanwhile,
             // prefetch the fallback brain right away: both models arrive as soon
