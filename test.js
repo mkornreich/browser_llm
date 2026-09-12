@@ -87,6 +87,18 @@ eq(BrowserLLM.nanoApi(), null, "no Prompt API → nanoApi null");
   eq(await BrowserLLM.nanoStatus({ availability: async function () { throw new Error("x"); } }),
     "unavailable", "nanoStatus that throws → unavailable");
 
+  // ── nanoOutputReal (Chromium echo-stub detection) ─────────────────────────────
+  eq(BrowserLLM.nanoOutputReal("Photosynthesis is how plants make food from sunlight."), true,
+    "nanoOutputReal: a genuine answer → real");
+  eq(BrowserLLM.nanoOutputReal("ready"), true, "nanoOutputReal: sentinel answer → real");
+  eq(BrowserLLM.nanoOutputReal(
+    "On-device model is not available in Chromium, this API is just echoing back the input:\n" + BrowserLLM.NANO_PROBE_PROMPT),
+    false, "nanoOutputReal: Chromium stub echo → not real");
+  eq(BrowserLLM.nanoOutputReal(BrowserLLM.NANO_PROBE_PROMPT), false,
+    "nanoOutputReal: reply echoes our prompt verbatim → not real");
+  eq(BrowserLLM.nanoOutputReal(""), false, "nanoOutputReal: empty → not real");
+  eq(BrowserLLM.nanoOutputReal(null), false, "nanoOutputReal: null → not real");
+
   // ── replyOf ─────────────────────────────────────────────────────────────────
   eq(BrowserLLM.replyOf([{ generated_text: [{ role: "user", content: "hi" }, { role: "assistant", content: " done " }] }]),
     "done", "replyOf chat array → last content trimmed");
