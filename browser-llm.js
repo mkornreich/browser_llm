@@ -255,6 +255,20 @@
     return "unavailable";
   }
 
+  // Chromium exposes the Prompt API surface but ships NO model: availability()
+  // reports "available" while prompt() merely ECHOES the input back (and says so).
+  // A functional probe sends this sentinel and checks the reply isn't that echo —
+  // the ONLY reliable signal that Nano can actually generate.
+  var NANO_PROBE_PROMPT = "Reply with only the word: ready";
+  function nanoOutputReal(out) {
+    if (!out) { return false; }
+    var s = String(out).toLowerCase();
+    if (s.indexOf("echoing back the input") !== -1) { return false; }        // the stub's own words
+    if (s.indexOf("on-device model is not available") !== -1) { return false; }
+    if (s.indexOf("reply with only the word") !== -1) { return false; }      // echoed our prompt verbatim
+    return true;
+  }
+
   // ── shared reply-shape helper ────────────────────────────────────────────────
   // transformers.js returns [{ generated_text: ... }]; pull out the assistant's
   // final message whether it comes back as a chat array or a plain string.
@@ -676,7 +690,9 @@ self.postMessage({ type: "boot" });
       if (api) {
         try {
           var st = await nanoStatus(api);
-          if (st === "available" || st === "downloadable" || st === "downloading") { return null; }
+          if (st === "downloadable" || st === "downloading") { return null; }   // Nano manages its own download
+          if (st === "available" && (await nanoWorks(api))) { return null; }     // real Nano → nothing for us to fetch
+          // else "available" is an echo stub (or unavailable): we DO need the WASM download → honor limits
         } catch (e) { /* fall through to the transformers path */ }
       }
       return connectionBlock();
@@ -912,27 +928,52 @@ self.postMessage({ type: "boot" });
       tfPipelinePromise = null;
     }
 
-    // Nano first (no download from us); only if it is missing or fails to start
-    // do we download SmolLM2.
+    // Confirm Nano actually generates before trusting it (Chromium's stub echoes;
+    // see nanoOutputReal). Otherwise we would hand callers an echo "brain" and never
+    // download the real SmolLM2 fallback. Probed at most once per page; cached only
+    // after an "available" model is really prompted, so a later downloadable→
+    // available transition still gets its chance.
+    var nanoWorksCache = null;   // null = unprobed; true/false once an "available" model was prompted
+    async function nanoWorks(api) {
+      if (nanoWorksCache !== null) { return nanoWorksCache; }
+      if (!api) { return false; }
+      var st;
+      try { st = await nanoStatus(api); } catch (e) { return false; }
+      if (st !== "available") { return false; }   // not installed yet: don't cache, it may change
+      try {
+        var sess = await api.create({ expectedInputs: NANO_LANG.expectedInputs, expectedOutputs: NANO_LANG.expectedOutputs });
+        var out;
+        try { out = await sess.prompt(NANO_PROBE_PROMPT); }
+        finally { if (sess && sess.destroy) { try { sess.destroy(); } catch (e) { /* ignore */ } } }
+        nanoWorksCache = nanoOutputReal(out);
+        return nanoWorksCache;
+      } catch (e) { nanoWorksCache = false; return false; }
+    }
+
+    // Nano first (no download from us); only if it is missing, not real, or fails
+    // to start do we download SmolLM2.
     async function buildBrain() {
       var api = nanoApi();
       if (api) {
         var status = await nanoStatus(api);
-        if (status === "available" || status === "downloadable" || status === "downloading") {
+        if (status === "downloadable" || status === "downloading") {
           try {
-            // Prepare Nano (downloads the built-in model once if needed). A fresh
-            // session per call, so this just warms/downloads, then frees it.
+            // Not installed yet: creating a session triggers Nano's own download
+            // (needs the click's user gesture). A throwaway session just warms it.
             var warm = await api.create({ monitor: nanoMonitor,
               expectedInputs: NANO_LANG.expectedInputs, expectedOutputs: NANO_LANG.expectedOutputs });
             if (warm && warm.destroy) { try { warm.destroy(); } catch (e) { /* ignore */ } }
-            dropTfSpare();   // Nano is the brain: free any prefetched spare (files stay cached)
-            return makeNanoBrain(api);
           } catch (e) {
             if (nanoOnly) { throw e; }   // nanoOnly: surface the Nano error, never fall back to SmolLM2
-            /* Nano failed to start → fall through to transformers */
+            /* download refused/failed → transformers below */
           }
-        } else if (nanoOnly) {
-          throw new Error("browser_llm: nanoOnly is set but Gemini Nano is unavailable (status: " + status + ").");
+        }
+        // Commit to Nano ONLY if it actually generates (Chromium's stub echoes).
+        var works = false;
+        try { works = await nanoWorks(api); } catch (e) { works = false; }
+        if (works) { dropTfSpare(); return makeNanoBrain(api); }
+        if (nanoOnly) {   // nanoOnly: never download SmolLM2, even when Nano is absent/fake
+          throw new Error("browser_llm: nanoOnly is set but Gemini Nano is unavailable or non-functional (status: " + status + ").");
         }
       } else if (nanoOnly) {
         throw new Error("browser_llm: nanoOnly is set but the Gemini Nano Prompt API is not present.");
@@ -977,9 +1018,18 @@ self.postMessage({ type: "boot" });
         return;
       }
       nanoStatus(api).then(function (status) {
-        self_.nanoReady = (status === "available");   // downloaded & usable (works offline)
+        if (status === "available") {
+          // "available" can be a Chromium echo stub — only ready if it truly generates.
+          nanoWorks(api).then(function (ok) {
+            self_.nanoReady = ok; fireState();
+            try { onNanoStatus(ok); } catch (e) {}
+            prewarmModel();
+          });
+          return;
+        }
+        self_.nanoReady = false;   // downloadable/downloading/unavailable: not usable offline yet
         fireState();
-        try { onNanoStatus(self_.nanoReady); } catch (e) {}
+        try { onNanoStatus(false); } catch (e) {}
         prewarmModel();
       }).catch(function () {
         self_.nanoReady = false; fireState();
@@ -1066,6 +1116,8 @@ self.postMessage({ type: "boot" });
     // static Prompt API helpers
     nanoApi: nanoApi,
     nanoStatus: nanoStatus,
+    nanoOutputReal: nanoOutputReal,
+    NANO_PROBE_PROMPT: NANO_PROBE_PROMPT,
     replyOf: replyOf,
     // generation loop (retries + pluggable output filter)
     generateWithRetry: generateWithRetry,
