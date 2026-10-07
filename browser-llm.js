@@ -950,13 +950,62 @@ self.postMessage({ type: "boot" });
       } catch (e) { nanoWorksCache = false; return false; }
     }
 
+    // Nano is not installed yet ("downloadable"/"downloading"). Its one-time
+    // download is Chrome-managed and can be gigabytes (in plain Chromium it is a
+    // minutes-long stand-in that ends in an echo stub), so do not make the reader
+    // wait on it when our own fallback can answer. Start the install now (the
+    // click's user gesture is what lets Chrome begin it) and race it against the
+    // fallback that prewarm already prefetched: whichever yields a WORKING brain
+    // first answers. If the fallback wins, Nano keeps installing in the
+    // background and is used on a later visit, once it is "available" and real.
+    function raceNanoInstall(api) {
+      var settled = false;
+      tfPrimary = true;                // the reader is waiting on the fallback: its progress may paint
+      var nanoP;
+      try {
+        // No monitor: this download runs in the background and must not paint
+        // progress over the fallback's, which is what the reader waits on.
+        nanoP = Promise.resolve(api.create({
+          expectedInputs: NANO_LANG.expectedInputs, expectedOutputs: NANO_LANG.expectedOutputs }));
+      } catch (e) { nanoP = Promise.reject(e); }
+      nanoP = nanoP.then(function (s) {
+        if (s && s.destroy) { try { s.destroy(); } catch (e) { /* ignore */ } }
+        return settled ? false : nanoWorks(api);   // the fallback already answered: skip the probe
+      });
+      var tfP = loadTfPipeline();
+      return new Promise(function (resolve, reject) {
+        var nanoDone = false, tfErr = null;
+        nanoP.then(function (works) {
+          nanoDone = true;
+          if (settled) { return; }
+          if (works) { settled = true; dropTfSpare(); resolve(makeNanoBrain(api)); }
+          else if (tfErr) { settled = true; reject(tfErr); }   // both failed
+        }, function () {
+          nanoDone = true;
+          if (!settled && tfErr) { settled = true; reject(tfErr); }   // both failed
+        });
+        tfP.then(function (brain) {
+          if (settled) { return; }
+          settled = true; resolve(brain);
+        }, function (e) {
+          tfErr = e || new Error("browser_llm: fallback model failed to load");
+          if (!settled && nanoDone) { settled = true; reject(tfErr); }   // Nano already lost too
+        });
+      });
+    }
+
     // Nano first (no download from us); only if it is missing, not real, or fails
-    // to start do we download SmolLM2.
+    // to start do we download SmolLM2. A Nano that still has to download races the
+    // fallback instead of blocking on it (see raceNanoInstall).
     async function buildBrain() {
       var api = nanoApi();
       if (api) {
         var status = await nanoStatus(api);
         if (status === "downloadable" || status === "downloading") {
+          // Race the install against the fallback, unless the caller wants Nano
+          // only, or the connection is too poor to pull our fallback (then wait on
+          // Nano's own install, as before).
+          if (!nanoOnly && !connectionBlock()) { return await raceNanoInstall(api); }
           try {
             // Not installed yet: creating a session triggers Nano's own download
             // (needs the click's user gesture). A throwaway session just warms it.
